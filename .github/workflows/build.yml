@@ -1,0 +1,167 @@
+name: Build AirdropzAlpha Framework with Python Plugins
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'plugins/**'
+      - 'electron/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'runtime/**'
+      - 'package.json'
+      - '.github/workflows/build.yml'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+      fail-fast: false  # 允许一个平台失败不影响另一个平台
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        echo "Installing Node.js dependencies..."
+        npm ci
+        echo "Installing Python dependencies..."
+        python -m pip install --upgrade pip
+        pip install aiohttp aiohttp-socks fake-useragent pytz pyinstaller
+        echo "Dependencies installed successfully"
+      shell: bash
+        
+    - name: Build Next.js
+      run: |
+        echo "Building Next.js application..."
+        echo "Current working directory: $(pwd)"
+        echo "Contents of current directory:"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          dir
+        else
+          ls -la
+        fi
+        echo "Checking package.json:"
+        if [ -f "package.json" ]; then
+          echo "package.json found"
+          cat package.json | head -10
+        else
+          echo "package.json not found!"
+          exit 1
+        fi
+        npm run build
+        echo "Next.js build completed"
+      shell: bash
+        
+    - name: Build Python executables
+      run: |
+        echo "Building Python executables..."
+        echo "Current directory: $(pwd)"
+        echo "Python plugins directory:"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          dir plugins/
+        else
+          ls -la plugins/
+        fi
+        
+        echo "Running build script..."
+        node scripts/build-python-executables.js
+        echo "Python executables built successfully"
+        echo "Generated executables:"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          dir dist/executables/
+        else
+          ls -la dist/executables/
+        fi
+      shell: bash
+      
+    - name: Package Electron App (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        echo "Packaging Electron app for macOS..."
+        npm run electron-pack-mac
+        echo "macOS packaging completed"
+        ls -la dist/*.dmg
+        ls -la dist/*.zip
+      shell: bash
+      env:
+        NODE_ENV: production
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Package Electron App (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        echo "Packaging Electron app for Windows..."
+        npm run electron-pack-win
+        echo "Windows packaging completed"
+        echo "Checking generated files:"
+        dir dist
+        echo "Windows build files:"
+        if [ -f "dist/AirdropzAlpha Setup 0.0.1.exe" ]; then
+          echo "✓ NSIS installer found: AirdropzAlpha Setup 0.0.1.exe"
+        fi
+        if [ -f "dist/AirdropzAlpha 0.0.1.exe" ]; then
+          echo "✓ Portable executable found: AirdropzAlpha 0.0.1.exe"
+        fi
+      shell: bash
+      env:
+        NODE_ENV: production
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+    - name: Upload macOS ARM64 build
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: airdropzalpha-macos-arm64
+        path: dist/AirdropzAlpha-0.0.1-arm64.dmg
+        
+    - name: Upload macOS x64 build
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: airdropzalpha-macos-x64
+        path: dist/AirdropzAlpha-0.0.1.dmg
+        
+    - name: Upload Windows build
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: airdropzalpha-windows
+        path: dist/AirdropzAlpha Setup 0.0.1.exe
+        
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/AirdropzAlpha-0.0.1-arm64.dmg
+          dist/AirdropzAlpha-0.0.1-arm64-mac.zip
+          dist/AirdropzAlpha-0.0.1.dmg
+          dist/AirdropzAlpha-0.0.1-mac.zip
+          dist/AirdropzAlpha Setup 0.0.1.exe
+          dist/AirdropzAlpha 0.0.1.exe
+        draft: false
+        prerelease: false
